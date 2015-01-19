@@ -85,6 +85,13 @@ ZEND_BEGIN_ARG_INFO_EX(arginfo_odbc_prepare, 0, 0, 2)
 	ZEND_ARG_INFO(0, query)
 ZEND_END_ARG_INFO()
 
+#ifdef HAVE_BIRDSTEP
+ZEND_BEGIN_ARG_INFO_EX(arginfo_odbc_lastinsertid, 0, 0, 2)
+	ZEND_ARG_INFO(0, result_id)
+	ZEND_ARG_INFO(0, table_name)
+ZEND_END_ARG_INFO()
+#endif
+
 ZEND_BEGIN_ARG_INFO_EX(arginfo_odbc_execute, 0, 0, 1)
 	ZEND_ARG_INFO(0, result_id)
 	ZEND_ARG_INFO(0, parameters_array)
@@ -336,6 +343,9 @@ const zend_function_entry odbc_functions[] = {
 	PHP_FE(odbc_cursor, arginfo_odbc_cursor)
 #ifdef HAVE_SQLDATASOURCES
 	PHP_FE(odbc_data_source, arginfo_odbc_data_source)
+#endif
+#ifdef HAVE_BIRDSTEP
+	PHP_FE(odbc_lastinsertid, arginfo_odbc_lastinsertid)
 #endif
 	PHP_FE(odbc_execute, arginfo_odbc_execute)
 	PHP_FE(odbc_error, arginfo_odbc_error)
@@ -1216,6 +1226,35 @@ PHP_FUNCTION(odbc_prepare)
 	ZEND_REGISTER_RESOURCE(return_value, result, le_result);  
 }
 /* }}} */
+
+#ifdef HAVE_BIRDSTEP
+/* {{{ proto string odbc_lastinsertid(resource connection_id, string arg)
+   Return the last inserted records' rowid */
+PHP_FUNCTION(odbc_lastinsertid)
+{
+	zval *pv_res;
+	odbc_result *result;
+	SQLRETURN rc;
+	char *table_name;
+	int table_name_len, outstrlen;
+	char *outstr;
+	SQLUINTEGER uRowId;
+
+	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "rs", &pv_res, &table_name, &table_name_len) == FAILURE) {
+		php_error_docref(NULL TSRMLS_CC, E_WARNING, "Parameter error!");
+		RETURN_FALSE;
+	}
+	ZEND_FETCH_RESOURCE(result, odbc_result *, &pv_res, -1, "ODBC result", le_result);
+
+	rc = SQLRowId(result->stmt, table_name, &uRowId);
+	if (SQL_SUCCEEDED(rc)) {
+		outstrlen = spprintf(&outstr, 0, "%d", uRowId);
+		RETURN_STRINGL(outstr, outstrlen, 0);
+	}
+	RETURN_FALSE;
+}
+/* }}} */
+#endif
 
 /*
  * Execute prepared SQL statement. Supports only input parameters.

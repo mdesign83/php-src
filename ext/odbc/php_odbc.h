@@ -60,6 +60,9 @@ PHP_FUNCTION(odbc_data_source);
 PHP_FUNCTION(odbc_do);
 PHP_FUNCTION(odbc_exec);
 PHP_FUNCTION(odbc_execute);
+#ifdef HAVE_BIRDSTEP
+PHP_FUNCTION(odbc_lastinsertid);
+#endif
 #ifdef PHP_ODBC_HAVE_FETCH_HASH
 PHP_FUNCTION(odbc_fetch_array);
 PHP_FUNCTION(odbc_fetch_object);
