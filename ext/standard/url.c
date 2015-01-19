@@ -240,16 +240,12 @@ PHPAPI php_url *php_url_parse_ex(char const *str, int length)
 	/* check for login and password */
 	if ((p = zend_memrchr(s, '@', (e-s)))) {
 		if ((pp = memchr(s, ':', (p-s)))) {
-			if ((pp-s) > 0) {
-				ret->user = estrndup(s, (pp-s));
-				php_replace_controlchars_ex(ret->user, (pp - s));
-			}	
+			ret->user = estrndup(s, (pp-s));
+			php_replace_controlchars_ex(ret->user, (pp - s));
 		
 			pp++;
-			if (p-pp > 0) {
-				ret->pass = estrndup(pp, (p-pp));
-				php_replace_controlchars_ex(ret->pass, (p-pp));
-			}	
+			ret->pass = estrndup(pp, (p-pp));
+			php_replace_controlchars_ex(ret->pass, (p-pp));
 		} else {
 			ret->user = estrndup(s, (p-s));
 			php_replace_controlchars_ex(ret->user, (p-s));
@@ -266,7 +262,7 @@ PHPAPI php_url *php_url_parse_ex(char const *str, int length)
 		p = s;
 	} else {
 		/* memrchr is a GNU specific extension
-		   Emulate for wide compatability */
+		   Emulate for wide compatibility */
 		for(p = e; p >= s && *p != ':'; p--);
 	}
 

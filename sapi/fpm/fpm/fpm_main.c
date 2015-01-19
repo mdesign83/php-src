@@ -157,7 +157,6 @@ static const opt_struct OPTIONS[] = {
 	{'R', 0, "allow-to-run-as-root"},
 	{'D', 0, "daemonize"},
 	{'F', 0, "nodaemonize"},
-	{'O', 0, "force-stderr"},
 	{'-', 0, NULL} /* end of args */
 };
 
@@ -316,7 +315,7 @@ static int sapi_cgibin_ub_write(const char *str, uint str_length TSRMLS_DC)
 }
 
 
-static void sapi_cgibin_flush(void *server_context TSRMLS_DC)
+static void sapi_cgibin_flush(void *server_context)
 {
 	/* fpm has started, let use fcgi instead of stdout */
 	if (fpm_is_running) {
@@ -499,11 +498,8 @@ static int sapi_cgi_read_post(char *buffer, uint count_bytes TSRMLS_DC)
 {
 	uint read_bytes = 0;
 	int tmp_read_bytes;
-	size_t remaining = SG(request_info).content_length - SG(read_post_bytes);
 
-	if (remaining < count_bytes) {
-		count_bytes = remaining;
-	}
+	count_bytes = MIN(count_bytes, (uint) SG(request_info).content_length - SG(read_post_bytes));
 	while (read_bytes < count_bytes) {
 		fcgi_request *request = (fcgi_request*) SG(server_context);
 		if (request_body_fd == -1) {
@@ -922,7 +918,7 @@ static void php_cgi_usage(char *argv0)
 		prog = "php";
 	}
 
-	php_printf(	"Usage: %s [-n] [-e] [-h] [-i] [-m] [-v] [-t] [-p <prefix>] [-g <pid>] [-c <file>] [-d foo[=bar]] [-y <file>] [-D] [-F [-O]]\n"
+	php_printf(	"Usage: %s [-n] [-e] [-h] [-i] [-m] [-v] [-t] [-p <prefix>] [-g <pid>] [-c <file>] [-d foo[=bar]] [-y <file>] [-D] [-F]\n"
 				"  -c <path>|<file> Look for php.ini file in this directory\n"
 				"  -n               No php.ini file will be used\n"
 				"  -d foo[=bar]     Define INI entry foo with value 'bar'\n"
@@ -941,8 +937,6 @@ static void php_cgi_usage(char *argv0)
 				"  -D, --daemonize  force to run in background, and ignore daemonize option from config file\n"
 				"  -F, --nodaemonize\n"
 				"                   force to stay in foreground, and ignore daemonize option from config file\n"
-                                "  -O, --force-stderr\n"
-                                "                   force output to stderr in nodaemonize even if stderr is not a TTY\n"
 				"  -R, --allow-to-run-as-root\n"
 				"                   Allow pool to run as root (disabled by default)\n",
 				prog, PHP_PREFIX);
@@ -1148,6 +1142,22 @@ static void init_request_info(TSRMLS_D)
 				TRANSLATE_SLASHES(env_document_root);
 			}
 
+			if (!apache_was_here && env_path_translated != NULL && env_redirect_url != NULL &&
+			    env_path_translated != script_path_translated &&
+			    strcmp(env_path_translated, script_path_translated) != 0) {
+				/*
+				 * pretty much apache specific.  If we have a redirect_url
+				 * then our script_filename and script_name point to the
+				 * php executable
+				 * we don't want to do this for the new mod_proxy_fcgi approach,
+				 * where redirect_url may also exist but the below will break
+				 * with rewrites to PATH_INFO, hence the !apache_was_here check
+				 */
+				script_path_translated = env_path_translated;
+				/* we correct SCRIPT_NAME now in case we don't have PATH_INFO */
+				env_script_name = env_redirect_url;
+			}
+
 #ifdef __riscos__
 			/* Convert path to unix format*/
 			__riscosify_control |= __RISCOSIFY_DONT_CHECK_DIR;
@@ -1221,6 +1231,17 @@ static void init_request_info(TSRMLS_D)
 										SG(request_info).request_uri = orig_script_name;
 									}
 									path_info[0] = old;
+								} else if (apache_was_here && env_script_name) {
+									/* Using mod_proxy_fcgi and ProxyPass, apache cannot set PATH_INFO
+									 * As we can extract PATH_INFO from PATH_TRANSLATED
+									 * it is probably also in SCRIPT_NAME and need to be removed
+									 */
+									int snlen = strlen(env_script_name);
+									if (snlen>slen && !strcmp(env_script_name+snlen-slen, path_info)) {
+										_sapi_cgibin_putenv("ORIG_SCRIPT_NAME", orig_script_name TSRMLS_CC);
+										env_script_name[snlen-slen] = 0;
+										SG(request_info).request_uri = _sapi_cgibin_putenv("SCRIPT_NAME", env_script_name TSRMLS_CC);
+									}
 								}
 								env_path_info = _sapi_cgibin_putenv("PATH_INFO", path_info TSRMLS_CC);
 							}
@@ -1325,6 +1346,18 @@ static void init_request_info(TSRMLS_D)
 					}
 					script_path_translated = _sapi_cgibin_putenv("SCRIPT_FILENAME", script_path_translated TSRMLS_CC);
 				}
+				if (!apache_was_here && env_redirect_url) {
+					/* if we used PATH_TRANSLATED to work around Apache mod_fastcgi (but not mod_proxy_fcgi,
+					 * hence !apache_was_here) weirdness, strip info accordingly */
+					if (orig_path_info) {
+						_sapi_cgibin_putenv("ORIG_PATH_INFO", orig_path_info TSRMLS_CC);
+						_sapi_cgibin_putenv("PATH_INFO", NULL TSRMLS_CC);
+					}
+					if (orig_path_translated) {
+						_sapi_cgibin_putenv("ORIG_PATH_TRANSLATED", orig_path_translated TSRMLS_CC);
+						_sapi_cgibin_putenv("PATH_TRANSLATED", NULL TSRMLS_CC);
+					}
+				}
 				if (env_script_name != orig_script_name) {
 					if (orig_script_name) {
 						_sapi_cgibin_putenv("ORIG_SCRIPT_NAME", orig_script_name TSRMLS_CC);
@@ -1333,7 +1366,7 @@ static void init_request_info(TSRMLS_D)
 				} else {
 					SG(request_info).request_uri = env_script_name;
 				}
-				efree(real_path);
+				free(real_path);
 			}
 		} else {
 			/* pre 4.3 behaviour, shouldn't be used but provides BC */
@@ -1552,7 +1585,6 @@ int main(int argc, char *argv[])
 	char *fpm_pid = NULL;
 	int test_conf = 0;
 	int force_daemon = -1;
-	int force_stderr = 0;
 	int php_information = 0;
 	int php_allow_to_run_as_root = 0;
 
@@ -1679,10 +1711,6 @@ int main(int argc, char *argv[])
 
 			case 'F': /* nodaemonize */
 				force_daemon = 0;
-				break;
-
-			case 'O': /* force stderr even on non tty */
-				force_stderr = 1;
 				break;
 
 			default:
@@ -1812,7 +1840,7 @@ consult the installation file that came with this distribution, or visit \n\
 		}
 	}
 
-	if (0 > fpm_init(argc, argv, fpm_config ? fpm_config : CGIG(fpm_config), fpm_prefix, fpm_pid, test_conf, php_allow_to_run_as_root, force_daemon, force_stderr)) {
+	if (0 > fpm_init(argc, argv, fpm_config ? fpm_config : CGIG(fpm_config), fpm_prefix, fpm_pid, test_conf, php_allow_to_run_as_root, force_daemon)) {
 
 		if (fpm_globals.send_config_pipe[1]) {
 			int writeval = 0;
@@ -1970,9 +1998,8 @@ fastcgi_request_done:
 out:
 
 	SG(server_context) = NULL;
-	php_module_shutdown(TSRMLS_C);
-
 	if (parent) {
+		php_module_shutdown(TSRMLS_C);
 		sapi_shutdown();
 	}
 

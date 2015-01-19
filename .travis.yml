@@ -8,6 +8,9 @@ notifications:
     email: 
        on_failure: change
 
+cache: 
+    - apt
+
 env:
     global:
       - MYSQL_TEST_HOST=127.0.0.1
@@ -21,6 +24,10 @@ env:
       - ENABLE_MAINTAINER_ZTS=0 ENABLE_DEBUG=0
       - ENABLE_MAINTAINER_ZTS=1 ENABLE_DEBUG=1
 
+before_install:
+    - sudo cp ./travis/de /var/lib/locales/supported.d/de
+    - sudo dpkg-reconfigure locales
+
 before_script:
     # Compile PHP
     - ./travis/compile.sh
@@ -32,6 +39,4 @@ before_script:
     - . ./travis/ext/pdo_pgsql/setup.sh
 
 # Run PHPs run-tests.php 
-script:
-    - ./sapi/cli/php run-tests.php -p `pwd`/sapi/cli/php -g "FAIL,XFAIL,BORK,WARN,LEAK,SKIP" --show-diff --set-timeout 120
-    - ./sapi/cli/php sapi/phpdbg/tests/run-tests.php -diff2stdout --phpdbg sapi/phpdbg/phpdbg
+script: ./sapi/cli/php run-tests.php -p `pwd`/sapi/cli/php -g "FAIL,XFAIL,BORK,WARN,LEAK,SKIP" --show-diff --set-timeout 120 -s
